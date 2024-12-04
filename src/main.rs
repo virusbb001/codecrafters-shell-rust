@@ -43,6 +43,11 @@ fn eval(mut state: ShellState, argv: &[&str]) -> ShellState{
             }
             state
         }
+        Some(&"echo") => {
+            let messages = argv[1..].join(" ");
+            println!("{}", messages);
+            state
+        }
         Some(cmd) => {
             println!("{}: not found", cmd);
             state
