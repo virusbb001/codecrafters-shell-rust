@@ -1,29 +1,51 @@
 #[allow(unused_imports)]
 use std::io::{self, Write};
 
+type ExitCode = i32;
+
+struct ShellState {
+    exit_code: Option<ExitCode>
+}
+impl ShellState {
+    fn default() -> ShellState {
+        ShellState {
+            exit_code: None
+        }
+    }
+}
+
 fn main() {
-    // TODO: check posix exit code
-    let mut exit_code: Option<i32> = None;
     let stdin = io::stdin();
+    let mut state = ShellState::default();
 
     // Wait for user input
-    while exit_code.is_none() {
+    while state.exit_code.is_none() {
         print!("$ ");
         io::stdout().flush().unwrap();
         let mut input = String::new();
         stdin.read_line(&mut input).unwrap();
         let argv: Vec<&str> = input.split_whitespace().collect();
-        if argv.first().filter(|cmd| **cmd == "exit").is_some() {
-            let code = argv.get(1).map(|v| v.parse::<i32>()).unwrap_or(Ok(0));
+        state = eval(state, &argv);
+    }
+    std::process::exit(state.exit_code.unwrap());
+}
+
+fn eval(mut state: ShellState, argv: &[&str]) -> ShellState{
+    let cmd = argv.first();
+    match cmd {
+        None => state,
+        Some(&"exit") => {
+            let code = argv.get(1).map(|v| v.parse::<ExitCode>()).unwrap_or(Ok(0));
             if let Err(e) = code {
                 println!("{}", e);
-                continue;
             } else if let Ok(code) = code {
-                exit_code = Some(code);
-                continue;
+                state.exit_code = Some(code);
             }
+            state
         }
-        println!("{}: not found", input.trim());
+        Some(cmd) => {
+            println!("{}: not found", cmd);
+            state
+        }
     }
-    std::process::exit(exit_code.unwrap());
 }
