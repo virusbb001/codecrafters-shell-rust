@@ -34,10 +34,24 @@ fn exit(mut state: ShellState, argv: &[&str]) -> ShellState {
     state
 }
 
+fn type_fn(state: ShellState, argv: &[&str]) -> ShellState {
+    let Some(cmd) = argv.first() else {
+        println!("type [cmd]");
+        return state
+    };
+    if BUILTIN_FUNCITONS.get(cmd).is_some() {
+        println!("{} is a shell builtin", cmd);
+    } else {
+        println!("{}: not found", cmd);
+    }
+    state
+}
+
 static BUILTIN_FUNCITONS: LazyLock<HashMap<&str, BuiltinFunciton>> = LazyLock::new(|| -> HashMap<&str, BuiltinFunciton> {
     let mut map = HashMap::new();
     map.insert("echo", echo as BuiltinFunciton);
     map.insert("exit", exit as BuiltinFunciton);
+    map.insert("type", type_fn as BuiltinFunciton);
     map
 });
 
