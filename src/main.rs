@@ -43,6 +43,8 @@ fn type_fn(state: ShellState, argv: &[&str]) -> ShellState {
     };
     if BUILTIN_FUNCITONS.get(cmd).is_some() {
         println!("{} is a shell builtin", cmd);
+    } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
+        println!("{} is {}", cmd, cmd_ext.display());
     } else {
         println!("{}: not found", cmd);
     }
