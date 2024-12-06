@@ -2,6 +2,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::{fs, sync::LazyLock};
 use std::collections::HashMap;
+use std::process::{Command, Stdio};
 #[allow(unused_imports)]
 use std::io::{self, Write};
 
@@ -113,6 +114,13 @@ fn eval(state: ShellState, argv: &[&str]) -> ShellState{
         Some(cmd) => {
             if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(cmd) {
                 builtin_fn(state, &argv[1..])
+            } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
+                let _ = Command::new(cmd_ext).args(&argv[1..])
+                    .spawn()
+                    .expect("")
+                    .wait()
+                    ;
+                state
             } else {
                 println!("{}: not found", cmd);
                 state
