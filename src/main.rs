@@ -1,4 +1,6 @@
-use std::sync::LazyLock;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::{fs, sync::LazyLock};
 use std::collections::HashMap;
 #[allow(unused_imports)]
 use std::io::{self, Write};
@@ -47,11 +49,42 @@ fn type_fn(state: ShellState, argv: &[&str]) -> ShellState {
     state
 }
 
+fn which_internal(path: &str, cmd: &str) -> Option<PathBuf> {
+    let path_dirs = path.split(':');
+    for dir_name in path_dirs {
+        let path = Path::new(dir_name).join(cmd);
+        let Ok(metadata) = fs::metadata(path.clone()) else {
+            continue;
+        };
+        if metadata.is_file() && (metadata.permissions().mode() & 0o111 != 0) {
+            return Some(path)
+        }
+    }
+    None
+}
+
+fn which(state: ShellState, argv: &[&str]) -> ShellState {
+    let Some(cmd) = argv.first() else {
+        println!("which [cmd]");
+        return state
+    };
+    match which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
+        None => {
+            println!("{}: not found", cmd);
+        }
+        Some(cmd_full) => {
+            println!("{} is {}", cmd, cmd_full.as_path().display());
+        }
+    };
+    state
+}
+
 static BUILTIN_FUNCITONS: LazyLock<HashMap<&str, BuiltinFunciton>> = LazyLock::new(|| -> HashMap<&str, BuiltinFunciton> {
     let mut map = HashMap::new();
     map.insert("echo", echo as BuiltinFunciton);
     map.insert("exit", exit as BuiltinFunciton);
     map.insert("type", type_fn as BuiltinFunciton);
+    map.insert("which", which as BuiltinFunciton);
     map
 });
 
