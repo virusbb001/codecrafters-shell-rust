@@ -95,6 +95,9 @@ fn cd(mut state: ShellState, argv: &[&str]) -> ShellState {
         None => {
             env::home_dir()
         }
+        Some(&"~") => {
+            env::home_dir()
+        }
         Some(dir) => {
             Some(PathBuf::from(dir))
         }
