@@ -104,12 +104,16 @@ fn cd(mut state: ShellState, argv: &[&str]) -> ShellState {
         return state;
     };
 
-    match fs::canonicalize(state.pwd.join(new_wd)) {
+    match fs::canonicalize(state.pwd.join(new_wd.clone())) {
         Ok(path) => {
             state.pwd = path;
         },
         Err(e) => {
-            println!("{}", e);
+            if e.kind() == io::ErrorKind::NotFound {
+                println!("cd: {}: No such file or directory", new_wd.display());
+            } else {
+                println!("Unexpected error: {}, {:?}", e, e.kind());
+            }
         }
     }
     state
