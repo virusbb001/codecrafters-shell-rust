@@ -151,6 +151,7 @@ fn eval(state: ShellState, argv: &[&str]) -> ShellState{
                 builtin_fn(state, &argv[1..])
             } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
                 let _ = Command::new(cmd_ext).args(&argv[1..])
+                    .current_dir(state.pwd.clone())
                     .spawn()
                     .expect("")
                     .wait()
