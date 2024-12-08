@@ -1,8 +1,9 @@
+use std::env;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::{fs, sync::LazyLock};
 use std::collections::HashMap;
-use std::process::{Command, Stdio};
+use std::process::Command;
 #[allow(unused_imports)]
 use std::io::{self, Write};
 
@@ -11,12 +12,14 @@ type ExitCode = i32;
 type BuiltinFunciton = fn(ShellState, &[&str])->ShellState;
 
 struct ShellState {
-    exit_code: Option<ExitCode>
+    exit_code: Option<ExitCode>,
+    pwd: PathBuf
 }
 impl ShellState {
     fn default() -> ShellState {
         ShellState {
-            exit_code: None
+            exit_code: None,
+            pwd: env::current_dir().unwrap()
         }
     }
 }
@@ -82,12 +85,44 @@ fn which(state: ShellState, argv: &[&str]) -> ShellState {
     state
 }
 
+fn pwd(state: ShellState, _argv: &[&str]) -> ShellState {
+    println!("{}", state.pwd.display());
+    state
+}
+
+fn cd(mut state: ShellState, argv: &[&str]) -> ShellState {
+    let new_wd = match argv.first() {
+        None => {
+            env::home_dir()
+        }
+        Some(dir) => {
+            Some(PathBuf::from(dir))
+        }
+    };
+    let Some(new_wd) = new_wd else {
+        println!("failed to get new directory");
+        return state;
+    };
+
+    match fs::canonicalize(state.pwd.join(new_wd)) {
+        Ok(path) => {
+            state.pwd = path;
+        },
+        Err(e) => {
+            println!("{}", e);
+        }
+    }
+    state
+}
+
 static BUILTIN_FUNCITONS: LazyLock<HashMap<&str, BuiltinFunciton>> = LazyLock::new(|| -> HashMap<&str, BuiltinFunciton> {
     let mut map = HashMap::new();
     map.insert("echo", echo as BuiltinFunciton);
     map.insert("exit", exit as BuiltinFunciton);
     map.insert("type", type_fn as BuiltinFunciton);
     map.insert("which", which as BuiltinFunciton);
+    map.insert("pwd", pwd as BuiltinFunciton);
+    map.insert("cd", cd as BuiltinFunciton);
     map
 });
 
