@@ -24,6 +24,74 @@ impl ShellState {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum ParseError {
+    QuoteMissing
+}
+
+#[derive(Debug)]
+enum Quote {
+    SingleQuote,
+    DoubleQuote,
+}
+
+impl Quote {
+    fn ch (&self) -> char {
+        match self {
+            Quote::SingleQuote => '\'',
+            Quote::DoubleQuote => '"',
+        }
+    }
+}
+
+fn parse(src: &str) -> Result<Vec<&str>, ParseError> {
+    let mut argv = Vec::<&str>::new();
+    let mut start: Option<usize> = None;
+    let mut is_in_quote: Option<Quote> = None;
+    for (index, ch) in src.chars().enumerate() {
+        println!("{}, in_quote: {:?}", ch, is_in_quote);
+
+        let end_token = if let Some(quote) = is_in_quote.as_ref() {
+            ch == quote.ch()
+        } else {
+            ch.is_ascii_whitespace()
+        };
+
+        if end_token {
+            if let Some(start_index) = start {
+                let start_i = start_index + (if is_in_quote.is_some() { 1 } else { 0 });
+                argv.push(&src[start_i..index]);
+                start = None;
+                if is_in_quote.is_some() {
+                    is_in_quote = None;
+                }
+                continue;
+            }
+        }
+
+        if ch.is_ascii_whitespace() {
+            continue;
+        }
+
+        if start.is_none() {
+            start = Some(index);
+            if ch == Quote::SingleQuote.ch() {
+                is_in_quote = Some(Quote::SingleQuote);
+            } else if ch == Quote::DoubleQuote.ch() {
+                is_in_quote = Some(Quote::DoubleQuote);
+            }
+            continue;
+        }
+    }
+    if let Some(start_index) = start {
+        if is_in_quote.is_some() {
+            return Err(ParseError::QuoteMissing);
+        }
+        argv.push(&src[start_index..src.len()]);
+    }
+    Ok(argv)
+}
+
 fn echo(state: ShellState, argv: &[&str]) -> ShellState {
     let messages = argv.join(" ");
     println!("{}", messages);
@@ -143,8 +211,14 @@ fn main() {
         io::stdout().flush().unwrap();
         let mut input = String::new();
         stdin.read_line(&mut input).unwrap();
-        let argv: Vec<&str> = input.split_whitespace().collect();
-        state = eval(state, &argv);
+        match parse(&input) {
+            Ok(argv) => {
+                state = eval(state, &argv);
+            },
+            Err(e) => {
+                println!("{:?}", e);
+            }
+        }
     }
     std::process::exit(state.exit_code.unwrap());
 }
@@ -171,3 +245,74 @@ fn eval(state: ShellState, argv: &[&str]) -> ShellState{
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_parse() {
+        let result = parse("a b c").unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "a");
+        assert_eq!(result[1], "b");
+        assert_eq!(result[2], "c");
+    }
+
+    #[test]
+    fn test_parse_multichar() {
+        let result = parse("ls -a").unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "ls");
+        assert_eq!(result[1], "-a");
+    }
+
+    #[test]
+    fn test_whitespace() {
+        let result = parse("    echo    hello world     ").unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], "echo");
+        assert_eq!(result[1], "hello");
+        assert_eq!(result[2], "world");
+    }
+    #[test]
+    fn test_single_quote() {
+        let result = parse("echo 'abcdef ghijkl'").unwrap();
+        println!("{:?}", result);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "echo");
+        assert_eq!(result[1], "abcdef ghijkl");
+    }
+    #[test]
+    fn test_double_quote() {
+        let result = parse("echo \"abcdef ghijkl\"").unwrap();
+        println!("{:?}", result);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "echo");
+        assert_eq!(result[1], "abcdef ghijkl");
+    }
+
+    #[test]
+    fn test_single_in_double() {
+        let result = parse("echo \"a'b\"").unwrap();
+        println!("{:?}", result);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "echo");
+        assert_eq!(result[1], "a'b");
+    }
+
+    #[test]
+    fn test_double_in_single() {
+        let result = parse("echo 'a\"b'").unwrap();
+        println!("{:?}", result);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "echo");
+        assert_eq!(result[1], "a\"b");
+    }
+
+    #[test]
+    fn test_missing_quote() {
+        let result = parse("echo 'a\"b").expect_err("expect missing quote error");
+        assert_eq!(result, ParseError::QuoteMissing);
+    }
+}
+
