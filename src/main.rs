@@ -49,8 +49,6 @@ fn parse(src: &str) -> Result<Vec<&str>, ParseError> {
     let mut start: Option<usize> = None;
     let mut is_in_quote: Option<Quote> = None;
     for (index, ch) in src.chars().enumerate() {
-        println!("{}, in_quote: {:?}", ch, is_in_quote);
-
         let end_token = if let Some(quote) = is_in_quote.as_ref() {
             ch == quote.ch()
         } else {
