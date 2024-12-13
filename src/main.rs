@@ -9,7 +9,7 @@ use std::io::{self, Write};
 
 type ExitCode = i32;
 
-type BuiltinFunciton = fn(ShellState, &[&str])->ShellState;
+type BuiltinFunciton = fn(ShellState, &[String])->ShellState;
 
 struct ShellState {
     exit_code: Option<ExitCode>,
@@ -29,7 +29,7 @@ enum ParseError {
     QuoteMissing
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Quote {
     SingleQuote,
     DoubleQuote,
@@ -44,11 +44,49 @@ impl Quote {
     }
 }
 
-fn parse(src: &str) -> Result<Vec<&str>, ParseError> {
-    let mut argv = Vec::<&str>::new();
+struct ShString<'a> {
+    quote: Option<Quote>,
+    val: &'a str
+}
+
+fn unescape(src: &ShString) -> String {
+    let mut result = String::new();
+    let mut escape = false;
+    for ch in src.val.chars() {
+        if escape {
+            let non_escape = match src.quote {
+                None => false,
+                Some(Quote::SingleQuote) => ch != '\'',
+                Some(Quote::DoubleQuote) => ch != '"',
+            };
+            if non_escape {
+                result.push('\\');
+            }
+        }
+        if ch == '\\' && !escape {
+            escape = true;
+            continue;
+        }
+        escape = false;
+        result.push(ch);
+    }
+    result
+}
+
+fn parse(src: &str) -> Result<Vec<String>, ParseError> {
+    let mut argv = Vec::<ShString>::new();
     let mut start: Option<usize> = None;
     let mut is_in_quote: Option<Quote> = None;
+    let mut escape = false;
     for (index, ch) in src.chars().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if ch == '\\' {
+            escape = true;
+            continue;
+        }
         let end_token = if let Some(quote) = is_in_quote.as_ref() {
             ch == quote.ch()
         } else {
@@ -58,7 +96,10 @@ fn parse(src: &str) -> Result<Vec<&str>, ParseError> {
         if end_token {
             if let Some(start_index) = start {
                 let start_i = start_index + (if is_in_quote.is_some() { 1 } else { 0 });
-                argv.push(&src[start_i..index]);
+                argv.push(ShString {
+                    quote: is_in_quote.clone(),
+                    val: &src[start_i..index]
+                });
                 start = None;
                 if is_in_quote.is_some() {
                     is_in_quote = None;
@@ -85,18 +126,21 @@ fn parse(src: &str) -> Result<Vec<&str>, ParseError> {
         if is_in_quote.is_some() {
             return Err(ParseError::QuoteMissing);
         }
-        argv.push(&src[start_index..src.len()]);
+        argv.push(ShString {
+            quote: None,
+            val: &src[start_index..src.len()]
+        });
     }
-    Ok(argv)
+    Ok(argv.iter().map(|s| unescape(s)).collect())
 }
 
-fn echo(state: ShellState, argv: &[&str]) -> ShellState {
+fn echo(state: ShellState, argv: &[String]) -> ShellState {
     let messages = argv.join(" ");
     println!("{}", messages);
     state
 }
 
-fn exit(mut state: ShellState, argv: &[&str]) -> ShellState {
+fn exit(mut state: ShellState, argv: &[String]) -> ShellState {
     let code = argv.first().map(|v| v.parse::<ExitCode>()).unwrap_or(Ok(0));
     if let Err(e) = code {
         println!("{}", e);
@@ -106,12 +150,12 @@ fn exit(mut state: ShellState, argv: &[&str]) -> ShellState {
     state
 }
 
-fn type_fn(state: ShellState, argv: &[&str]) -> ShellState {
+fn type_fn(state: ShellState, argv: &[String]) -> ShellState {
     let Some(cmd) = argv.first() else {
         println!("type [cmd]");
         return state
     };
-    if BUILTIN_FUNCITONS.get(cmd).is_some() {
+    if BUILTIN_FUNCITONS.get(cmd.as_str()).is_some() {
         println!("{} is a shell builtin", cmd);
     } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
         println!("{} is {}", cmd, cmd_ext.display());
@@ -135,7 +179,7 @@ fn which_internal(path: &str, cmd: &str) -> Option<PathBuf> {
     None
 }
 
-fn which(state: ShellState, argv: &[&str]) -> ShellState {
+fn which(state: ShellState, argv: &[String]) -> ShellState {
     let Some(cmd) = argv.first() else {
         println!("which [cmd]");
         return state
@@ -151,21 +195,22 @@ fn which(state: ShellState, argv: &[&str]) -> ShellState {
     state
 }
 
-fn pwd(state: ShellState, _argv: &[&str]) -> ShellState {
+fn pwd(state: ShellState, _argv: &[String]) -> ShellState {
     println!("{}", state.pwd.display());
     state
 }
 
-fn cd(mut state: ShellState, argv: &[&str]) -> ShellState {
+fn cd(mut state: ShellState, argv: &[String]) -> ShellState {
     let new_wd = match argv.first() {
         None => {
             env::home_dir()
         }
-        Some(&"~") => {
-            env::home_dir()
-        }
         Some(dir) => {
-            Some(PathBuf::from(dir))
+            if dir == "~" {
+                env::home_dir()
+            } else {
+                Some(PathBuf::from(dir))
+            }
         }
     };
     let Some(new_wd) = new_wd else {
@@ -221,12 +266,12 @@ fn main() {
     std::process::exit(state.exit_code.unwrap());
 }
 
-fn eval(state: ShellState, argv: &[&str]) -> ShellState{
+fn eval(state: ShellState, argv: &[String]) -> ShellState{
     let cmd = argv.first();
     match cmd {
         None => state,
         Some(cmd) => {
-            if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(cmd) {
+            if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(cmd.as_str()) {
                 builtin_fn(state, &argv[1..])
             } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
                 let _ = Command::new(cmd_ext).args(&argv[1..])
@@ -311,6 +356,47 @@ mod tests {
     fn test_missing_quote() {
         let result = parse("echo 'a\"b").expect_err("expect missing quote error");
         assert_eq!(result, ParseError::QuoteMissing);
+    }
+
+    #[test]
+    fn test_outside_escape() {
+        let result = parse("echo a\\ b").unwrap();
+        println!("{:?}", result);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], "echo");
+        assert_eq!(result[1], "a b");
+    }
+
+    #[test]
+    fn test_unescape_none() {
+        assert_eq!(unescape(&ShString {
+            quote: None,
+            val: "abcdef"
+        }), "abcdef");
+    }
+
+    #[test]
+    fn test_unescape_space() {
+        assert_eq!(unescape(&ShString {
+            quote: None,
+            val: r"abc\ def"
+        }), r"abc def");
+    }
+
+    #[test]
+    fn test_unescape_quote() {
+        assert_eq!(unescape(&ShString {
+            quote: None,
+            val: r#"abc\"def"#
+        }), r#"abc"def"#);
+    }
+
+    #[test]
+    fn test_double_quote_backslash_space () {
+        assert_eq!(unescape(&ShString {
+            quote: Some(Quote::DoubleQuote),
+            val: r#"before\   after"#
+        }), r#"before\   after"#);
     }
 }
 
