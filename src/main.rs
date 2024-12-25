@@ -44,41 +44,87 @@ impl Quote {
     }
 }
 
-struct ShString<'a> {
-    quote: Option<Quote>,
-    val: &'a str
+struct UnescapeState {
+    escape: bool,
+    is_in_quote: Option<Quote>
 }
 
-fn unescape(src: &ShString) -> String {
-    let mut result = String::new();
-    let mut escape = false;
-    for ch in src.val.chars() {
-        if escape {
-            let non_escape = match src.quote {
-                None => false,
-                Some(Quote::SingleQuote) => ch != '\'',
-                Some(Quote::DoubleQuote) => ch != '"',
-            };
-            if non_escape {
-                result.push('\\');
+fn unescape_inside(ch: char, peek: Option<&char>, mut state: UnescapeState)-> (Option<char>, UnescapeState) {
+    if state.escape {
+        state.escape = false;
+        return (Some(ch), state);
+    }
+    if ch == '\\' {
+        let to_escape = match state.is_in_quote {
+            None => true,
+            Some(Quote::SingleQuote) => peek.filter(|c| **c == Quote::SingleQuote.ch()).is_some(),
+            Some(Quote::DoubleQuote) => peek.filter(|c| **c == Quote::DoubleQuote.ch() || **c == '\\').is_some(),
+        };
+        if to_escape {
+            state.escape = true;
+            return (None, state);
+        }
+    }
+    if ch == Quote::SingleQuote.ch() {
+        match state.is_in_quote {
+            None => {
+                state.is_in_quote = Some(Quote::SingleQuote);
+                return (None, state);
+            },
+            Some(Quote::SingleQuote) => {
+                state.is_in_quote = None;
+                return (None, state);
+            },
+            Some(_) => {
             }
         }
-        if ch == '\\' && !escape {
-            escape = true;
-            continue;
-        }
-        escape = false;
-        result.push(ch);
     }
+
+    if ch == Quote::DoubleQuote.ch() {
+        match state.is_in_quote {
+            None => {
+                state.is_in_quote = Some(Quote::DoubleQuote);
+                return (None, state);
+            },
+            Some(Quote::DoubleQuote) => {
+                state.is_in_quote = None;
+                return (None, state);
+            },
+            Some(_) => {
+            }
+        }
+    }
+    (Some(ch), state)
+}
+
+fn unescape(src: &str) -> String {
+    let mut result = String::new();
+    let mut state = UnescapeState {
+        escape: false,
+        is_in_quote: None,
+    };
+
+    let mut chars = src.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        let unescaped = unescape_inside(ch, chars.peek(), state);
+        state = unescaped.1;
+        // println!("{} {} {:?} {:?}", ch, state.escape, state.is_in_quote, unescaped.0);
+        if let Some(r) = unescaped.0 {
+            result.push(r);
+        }
+    }
+
     result
 }
 
-fn parse(src: &str) -> Result<Vec<String>, ParseError> {
-    let mut argv = Vec::<ShString>::new();
+fn tokenize(src: &str) -> Result<Vec<&str>, ParseError> {
+    let mut argv = Vec::<&str>::new();
     let mut start: Option<usize> = None;
     let mut is_in_quote: Option<Quote> = None;
     let mut escape = false;
     for (index, ch) in src.chars().enumerate() {
+        // escape
         if escape {
             escape = false;
             continue;
@@ -87,38 +133,39 @@ fn parse(src: &str) -> Result<Vec<String>, ParseError> {
             escape = true;
             continue;
         }
-        let end_token = if let Some(quote) = is_in_quote.as_ref() {
-            ch == quote.ch()
-        } else {
-            ch.is_ascii_whitespace()
-        };
 
-        if end_token {
+        // quotes
+        if ch == Quote::SingleQuote.ch() {
+            is_in_quote = match is_in_quote {
+                None => Some(Quote::SingleQuote),
+                Some(Quote::SingleQuote) => None,
+                Some(_) => is_in_quote
+            };
+        } else if ch == Quote::DoubleQuote.ch() {
+            is_in_quote = match is_in_quote {
+                None => Some(Quote::DoubleQuote),
+                Some(Quote::DoubleQuote) => None,
+                Some(_) => is_in_quote
+            };
+        }
+
+        // white spaces
+        if ch.is_ascii_whitespace() {
+            if is_in_quote.is_some() {
+                continue;
+            }
+
             if let Some(start_index) = start {
-                let start_i = start_index + (if is_in_quote.is_some() { 1 } else { 0 });
-                argv.push(ShString {
-                    quote: is_in_quote.clone(),
-                    val: &src[start_i..index]
-                });
+                let start_i = start_index;
+                argv.push(&src[start_i..index]);
                 start = None;
                 if is_in_quote.is_some() {
                     is_in_quote = None;
                 }
                 continue;
             }
-        }
-
-        if ch.is_ascii_whitespace() {
-            continue;
-        }
-
-        if start.is_none() {
+        } else if start.is_none() {
             start = Some(index);
-            if ch == Quote::SingleQuote.ch() {
-                is_in_quote = Some(Quote::SingleQuote);
-            } else if ch == Quote::DoubleQuote.ch() {
-                is_in_quote = Some(Quote::DoubleQuote);
-            }
             continue;
         }
     }
@@ -126,12 +173,13 @@ fn parse(src: &str) -> Result<Vec<String>, ParseError> {
         if is_in_quote.is_some() {
             return Err(ParseError::QuoteMissing);
         }
-        argv.push(ShString {
-            quote: None,
-            val: &src[start_index..src.len()]
-        });
+        argv.push(&src[start_index..src.len()]);
     }
-    Ok(argv.iter().map(|s| unescape(s)).collect())
+    Ok(argv)
+}
+
+fn parse(src: &str) -> Result<Vec<String>, ParseError> {
+    tokenize(src).map(|tokens| tokens.iter().map(|s| unescape(s)).collect())
 }
 
 fn echo(state: ShellState, argv: &[String]) -> ShellState {
@@ -293,8 +341,8 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
 mod tests {
     use super::*;
     #[test]
-    fn test_parse() {
-        let result = parse("a b c").unwrap();
+    fn test_tokenize() {
+        let result = tokenize("a b c").unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], "a");
         assert_eq!(result[1], "b");
@@ -302,8 +350,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_multichar() {
-        let result = parse("ls -a").unwrap();
+    fn test_tokenize_multichar() {
+        let result = tokenize("ls -a").unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], "ls");
         assert_eq!(result[1], "-a");
@@ -311,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_whitespace() {
-        let result = parse("    echo    hello world     ").unwrap();
+        let result = tokenize("    echo    hello world     ").unwrap();
         assert_eq!(result.len(), 3);
         assert_eq!(result[0], "echo");
         assert_eq!(result[1], "hello");
@@ -319,84 +367,93 @@ mod tests {
     }
     #[test]
     fn test_single_quote() {
-        let result = parse("echo 'abcdef ghijkl'").unwrap();
+        let result = tokenize("echo 'abcdef ghijkl'").unwrap();
         println!("{:?}", result);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], "echo");
-        assert_eq!(result[1], "abcdef ghijkl");
+        assert_eq!(result[1], "'abcdef ghijkl'");
     }
     #[test]
     fn test_double_quote() {
-        let result = parse("echo \"abcdef ghijkl\"").unwrap();
+        let result = tokenize("echo \"abcdef ghijkl\"").unwrap();
         println!("{:?}", result);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], "echo");
-        assert_eq!(result[1], "abcdef ghijkl");
-    }
-
-    #[test]
-    fn test_single_in_double() {
-        let result = parse("echo \"a'b\"").unwrap();
-        println!("{:?}", result);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], "echo");
-        assert_eq!(result[1], "a'b");
-    }
-
-    #[test]
-    fn test_double_in_single() {
-        let result = parse("echo 'a\"b'").unwrap();
-        println!("{:?}", result);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], "echo");
-        assert_eq!(result[1], "a\"b");
+        assert_eq!(result[1], r#""abcdef ghijkl""#);
     }
 
     #[test]
     fn test_missing_quote() {
-        let result = parse("echo 'a\"b").expect_err("expect missing quote error");
+        let result = tokenize("echo 'a\"b").expect_err("expect missing quote error");
         assert_eq!(result, ParseError::QuoteMissing);
     }
 
     #[test]
-    fn test_outside_escape() {
-        let result = parse("echo a\\ b").unwrap();
+    fn test_tokenize_outside_escape() {
+        let result = tokenize("echo a\\ b").unwrap();
         println!("{:?}", result);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], "echo");
-        assert_eq!(result[1], "a b");
+        assert_eq!(result[1], "a\\ b");
     }
 
     #[test]
     fn test_unescape_none() {
-        assert_eq!(unescape(&ShString {
-            quote: None,
-            val: "abcdef"
-        }), "abcdef");
+        assert_eq!(unescape("abcdef"), "abcdef");
     }
 
     #[test]
     fn test_unescape_space() {
-        assert_eq!(unescape(&ShString {
-            quote: None,
-            val: r"abc\ def"
-        }), r"abc def");
+        assert_eq!(unescape(r"abc\ def"), r"abc def");
     }
 
     #[test]
     fn test_unescape_quote() {
-        assert_eq!(unescape(&ShString {
-            quote: None,
-            val: r#"abc\"def"#
-        }), r#"abc"def"#);
+        assert_eq!(unescape(r#"abc\"def"#), r#"abc"def"#);
     }
 
     #[test]
     fn test_double_quote_backslash_space () {
-        assert_eq!(unescape(&ShString {
-            quote: Some(Quote::DoubleQuote),
-            val: r#"before\   after"#
-        }), r#"before\   after"#);
+        assert_eq!(unescape(r#""before\   after""#), r#"before\   after"#);
+    }
+
+    #[test]
+    fn test_double_in_single () {
+        assert_eq!(unescape(r#"'exe with "quotes"'"#), r#"exe with "quotes""#);
+    }
+
+    #[test]
+    fn test_single_in_double () {
+        assert_eq!(unescape(r#""exe with 'single quotes'""#), r#"exe with 'single quotes'"#);
+    }
+    #[test]
+    fn test_backslash_within_double_quotes_1 () {
+        assert_eq!(
+            unescape(r#""hello'script'\\n'world""#),
+            r#"hello'script'\n'world"#
+        );
+    }
+
+    #[test]
+    fn test_escape_baclslash_in_double_quote () {
+        assert_eq!(unescape(r#""a\\b""#), r#"a\b"#);
+    }
+
+    #[test]
+    fn test_escape_backslash_in_double_quote_2 () {
+        assert_eq!(unescape(r#""hello\"insidequotes"script\""#), r#"hello"insidequotesscript""#);
+    }
+
+    #[test]
+    fn test_backslash_within_single_quotes () {
+        assert_eq!(
+            unescape(r#"'shell\\\nscript'"#),
+            r#"shell\\\nscript"#
+        );
+        assert_eq!(
+            unescape(r#"'example\"testhello\"shell'"#),
+            r#"example\"testhello\"shell"#
+        )
     }
 }
 
