@@ -330,7 +330,7 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
                     ;
                 state
             } else {
-                println!("{}: not found", cmd);
+                println!("{}: command not found", cmd);
                 state
             }
         }
