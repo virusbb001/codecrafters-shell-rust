@@ -41,7 +41,7 @@ pub fn raw_word(s: &str) -> Option<(&str, &str)> {
             escape = true;
             continue;
         }
-        if ch.is_whitespace() || ch == '\'' || ch == '"' {
+        if ch.is_whitespace() || ch == '\'' || ch == '"' || ch == '>' {
             if index == 0 {
                 return None;
             }
@@ -133,7 +133,7 @@ pub fn trim_space(s: &str) -> Option<((), &str)> {
 /**
 * some character
 */
-pub fn word(s: &str) -> Option<(&str, &str)> {
+fn word(s: &str) -> Option<(&str, &str)> {
     let elem = choice!(quoted('\''), quoted('"'), raw_word);
     let first = elem(s)?;
     let r = many(elem)(first.1);
@@ -141,8 +141,18 @@ pub fn word(s: &str) -> Option<(&str, &str)> {
     Some((&s[..end], &s[end..]))
 }
 
+fn redirect(s: &str) -> Option<(&str, &str)> {
+    if s.starts_with(">>") {
+        Some((&s[..2], &s[2..]))
+    } else if s.starts_with(">") {
+        Some((&s[..1], &s[1..]))
+    } else {
+        None
+    }
+}
+
 pub fn tokenize(src: &str) -> Result<Vec<&str>, ParseError> {
-    let r = join(many(lexeme(word)), trim_space)(src);
+    let r = join(many(choice!(lexeme(word), lexeme(redirect))), trim_space)(src);
     let Some(parsed) = r else {
         return Err(ParseError::FailedToParse);
     };
@@ -263,6 +273,14 @@ mod tests {
     }
 
     #[test]
+    fn test_redirect() {
+        let parser = redirect;
+        assert_eq!(parser(">> abc"), Some((">>", " abc")));
+        assert_eq!(parser("> abc"), Some((">", " abc")));
+        assert_eq!(parser("abc"), None);
+    }
+
+    #[test]
     fn test_tokenize() {
         let result = tokenize("a b c").unwrap();
         assert_eq!(result.len(), 3);
@@ -318,7 +336,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_tokenize_redirect () {
         let result = tokenize("echo a > b").unwrap();
         assert_eq!(result, ["echo", "a", ">", "b"]);
