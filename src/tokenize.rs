@@ -58,17 +58,6 @@ pub fn quoted<'a>(ch: char) -> impl Parser<'a, &'a str> {
 
         cursor.next().filter(|c| c.1 == ch)?;
 
-        /*
-        while let Some(index) = s[base..].find(ch) {
-            if s[base..].chars().nth(index - 1).filter(|c| *c == '\\').is_some() {
-                base = base + index + 1;
-                continue;
-            }
-            let end = base + index + 1;
-            return Some((&s[0..end], &s[end..]));
-        }
-*/
-
         let mut escape = false;
         for (index, c) in cursor {
             if escape {
