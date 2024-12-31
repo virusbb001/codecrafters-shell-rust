@@ -269,6 +269,20 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
 
                     }
                 };
+                let _stderr: Box<dyn Write> = match proc.stderr {
+                    None => Box::new(std::io::stderr()),
+                    Some(filename) => {
+                        let filename = state.pwd.join(filename);
+                        match proc.stderr_mode {
+                            RedirMode::Write => Box::new(File::create(filename).unwrap()),
+                            RedirMode::Append => Box::new(File::options()
+                                .append(true)
+                                .open(filename)
+                                .unwrap())
+                        }
+
+                    }
+                };
                 builtin_fn(state, &proc.argv, stdout)
             } else if which_internal(&std::env::var("PATH").unwrap_or("".to_string()), proc.exec).is_some() {
                 let mut cmd = Command::new(proc.exec);
