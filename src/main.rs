@@ -30,26 +30,90 @@ impl ShellState {
     }
 }
 
-struct Proc {
-    exec: String,
+#[derive(PartialEq, Debug)]
+enum RedirMode {
+    Write,
+    Append
+}
+
+struct Proc<'a> {
+    exec: &'a str,
     argv: Vec<String>,
-    stdout: Option<String>,
-    stderr: Option<String>,
+    stdout: Option<&'a str>,
+    stdout_mode: RedirMode,
+    stderr: Option<&'a str>,
+    stderr_mode: RedirMode,
 }
 
 fn parse(src: &str) -> Result<Vec<String>, ParseError> {
     tokenize(src).map(|tokens| tokens.iter().map(|s| unescape(s)).collect())
 }
 
-fn words2proc(argv: &[String]) -> Option<Proc> {
-    let exec = argv.first()?.to_string();
+enum ToRedirect {
+    Stdout,
+    Stderr,
+}
 
-    Some(Proc {
+fn words2proc(argv: &[String]) -> Option<Proc<'_>> {
+    let exec = argv.first()?;
+    let mut cursor = argv[1..].iter().enumerate().peekable();
+    let mut to_redirect: Option<ToRedirect> = None;
+    
+    let mut proc = Proc {
         exec,
-        argv: argv[1..].to_vec(),
+        argv: Vec::<String>::new(),
         stdout: None,
+        stdout_mode: RedirMode::Write,
         stderr: None,
-    })
+        stderr_mode: RedirMode::Write,
+    };
+
+    while let Some((_index, word)) = cursor.next() {
+        if word == "1" || word == "2" {
+            let next = cursor.peek();
+            let next_is_redirect = next.filter(|(_, w)| *w == ">" || *w == ">>").is_some();
+            if next_is_redirect {
+                to_redirect = match word.as_str() {
+                    "1" => Some(ToRedirect::Stdout),
+                    "2" => Some(ToRedirect::Stderr),
+                    _ => panic!()
+                };
+                continue;
+            }
+        } else if word == ">" {
+            let target = cursor.next().unwrap().1;
+            match to_redirect.as_ref().unwrap_or(&ToRedirect::Stdout) {
+                ToRedirect::Stdout => {
+                    proc.stdout = Some(target);
+                    proc.stdout_mode = RedirMode::Write;
+                },
+                ToRedirect::Stderr => {
+                    proc.stderr = Some(target);
+                    proc.stderr_mode = RedirMode::Write;
+                },
+            }
+            continue;
+        }
+
+        if word == ">>" {
+            let target = cursor.next().unwrap().1;
+            match to_redirect.as_ref().unwrap_or(&ToRedirect::Stdout) {
+                ToRedirect::Stdout => {
+                    proc.stdout = Some(target);
+                    proc.stdout_mode = RedirMode::Write;
+                },
+                ToRedirect::Stderr => {
+                    proc.stderr = Some(target);
+                    proc.stderr_mode = RedirMode::Write;
+                },
+            }
+            continue;
+        }
+
+        proc.argv.push(word.to_string());
+    }
+
+    Some(proc)
 }
 
 fn echo(state: ShellState, argv: &[String]) -> ShellState {
@@ -73,7 +137,7 @@ fn type_fn(state: ShellState, argv: &[String]) -> ShellState {
         println!("type [cmd]");
         return state
     };
-    if BUILTIN_FUNCITONS.get(cmd.as_str()).is_some() {
+    if BUILTIN_FUNCITONS.get((*cmd).as_str()).is_some() {
         println!("{} is a shell builtin", cmd);
     } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
         println!("{} is {}", cmd, cmd_ext.display());
@@ -189,10 +253,10 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
     match proc {
         None => state,
         Some(proc) => {
-            if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(proc.exec.as_str()) {
+            if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(proc.exec) {
                 builtin_fn(state, &proc.argv)
-            } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), &proc.exec) {
-                let _ = Command::new(cmd_ext).args(&proc.argv)
+            } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), proc.exec) {
+                let _ = Command::new(cmd_ext).args(proc.argv)
                     .current_dir(state.pwd.clone())
                     .spawn()
                     .expect("")
@@ -209,6 +273,60 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
 
 #[cfg(test)]
 mod tests {
-    // use super::*;
+    use super::*;
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|a| a.to_string()).collect()
+    }
+
+    #[test]
+    fn test_words2proc() {
+        let argv = args(&["echo", "a", "b"]);
+        let result = words2proc(&argv).unwrap();
+        assert_eq!(result.exec, "echo");
+        assert_eq!(result.argv, vec!["a", "b"]);
+        assert_eq!(result.stdout, None);
+        assert_eq!(result.stderr, None);
+
+        let argv = args(&["echo", "1", "2"]);
+        let result = words2proc(&argv).unwrap();
+        assert_eq!(result.exec, "echo");
+        assert_eq!(result.argv, vec!["1", "2"]);
+        assert_eq!(result.stdout, None);
+        assert_eq!(result.stderr, None);
+
+        let argv = args(&["echo", "a", ">", "b"]);
+        let result = words2proc(&argv).unwrap();
+        assert_eq!(result.exec, "echo");
+        assert_eq!(result.argv, vec!["a"]);
+        assert_eq!(result.stdout, Some("b"));
+        assert_eq!(result.stdout_mode, RedirMode::Write);
+        assert_eq!(result.stderr, None);
+
+        let argv = args(&["echo", "a", "2", ">", "b"]);
+        let result = words2proc(&argv).unwrap();
+        assert_eq!(result.exec, "echo");
+        assert_eq!(result.argv, vec!["a"]);
+        assert_eq!(result.stdout, None);
+        assert_eq!(result.stderr, Some("b"));
+        assert_eq!(result.stderr_mode, RedirMode::Write);
+
+        let argv = args(&["echo", "a", ">>", "b"]);
+        let result = words2proc(&argv).unwrap();
+        assert_eq!(result.exec, "echo");
+        assert_eq!(result.argv, vec!["a"]);
+        assert_eq!(result.stdout, Some("b"));
+        assert_eq!(result.stdout_mode, RedirMode::Write);
+        assert_eq!(result.stderr, None);
+
+        let argv = args(&["echo", "a", "2", ">>", "b"]);
+        let result = words2proc(&argv).unwrap();
+        assert_eq!(result.exec, "echo");
+        assert_eq!(result.argv, vec!["a"]);
+        assert_eq!(result.stdout, None);
+        assert_eq!(result.stderr, Some("b"));
+        assert_eq!(result.stderr_mode, RedirMode::Write);
+
+    }
 }
 
