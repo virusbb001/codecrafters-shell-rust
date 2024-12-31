@@ -16,7 +16,7 @@ mod unescape;
 
 type ExitCode = i32;
 
-type BuiltinFunciton = fn(ShellState, &[String])->ShellState;
+type BuiltinFunction = fn(ShellState, &[String], Box<dyn Write>)->ShellState;
 
 struct ShellState {
     exit_code: Option<ExitCode>,
@@ -117,13 +117,13 @@ fn words2proc(argv: &[String]) -> Option<Proc<'_>> {
     Some(proc)
 }
 
-fn echo(state: ShellState, argv: &[String]) -> ShellState {
+fn echo(state: ShellState, argv: &[String], mut stdout: Box<dyn Write>) -> ShellState {
     let messages = argv.join(" ");
-    println!("{}", messages);
+    stdout.write_all(format!("{}\n", messages).as_bytes()).expect("should success to write");
     state
 }
 
-fn exit(mut state: ShellState, argv: &[String]) -> ShellState {
+fn exit(mut state: ShellState, argv: &[String], _: Box<dyn Write>) -> ShellState {
     let code = argv.first().map(|v| v.parse::<ExitCode>()).unwrap_or(Ok(0));
     if let Err(e) = code {
         println!("{}", e);
@@ -133,7 +133,7 @@ fn exit(mut state: ShellState, argv: &[String]) -> ShellState {
     state
 }
 
-fn type_fn(state: ShellState, argv: &[String]) -> ShellState {
+fn type_fn(state: ShellState, argv: &[String], _: Box<dyn Write>) -> ShellState {
     let Some(cmd) = argv.first() else {
         println!("type [cmd]");
         return state
@@ -162,7 +162,7 @@ fn which_internal(path: &str, cmd: &str) -> Option<PathBuf> {
     None
 }
 
-fn which(state: ShellState, argv: &[String]) -> ShellState {
+fn which(state: ShellState, argv: &[String], _: Box<dyn Write>) -> ShellState {
     let Some(cmd) = argv.first() else {
         println!("which [cmd]");
         return state
@@ -178,12 +178,12 @@ fn which(state: ShellState, argv: &[String]) -> ShellState {
     state
 }
 
-fn pwd(state: ShellState, _argv: &[String]) -> ShellState {
+fn pwd(state: ShellState, _argv: &[String], _: Box<dyn Write>) -> ShellState {
     println!("{}", state.pwd.display());
     state
 }
 
-fn cd(mut state: ShellState, argv: &[String]) -> ShellState {
+fn cd(mut state: ShellState, argv: &[String], _: Box<dyn Write>) -> ShellState {
     let new_wd = match argv.first() {
         None => {
             env::home_dir()
@@ -216,14 +216,14 @@ fn cd(mut state: ShellState, argv: &[String]) -> ShellState {
     state
 }
 
-static BUILTIN_FUNCITONS: LazyLock<HashMap<&str, BuiltinFunciton>> = LazyLock::new(|| -> HashMap<&str, BuiltinFunciton> {
+static BUILTIN_FUNCITONS: LazyLock<HashMap<&str, BuiltinFunction>> = LazyLock::new(|| -> HashMap<&str, BuiltinFunction> {
     let mut map = HashMap::new();
-    map.insert("echo", echo as BuiltinFunciton);
-    map.insert("exit", exit as BuiltinFunciton);
-    map.insert("type", type_fn as BuiltinFunciton);
-    map.insert("which", which as BuiltinFunciton);
-    map.insert("pwd", pwd as BuiltinFunciton);
-    map.insert("cd", cd as BuiltinFunciton);
+    map.insert("echo", echo as BuiltinFunction);
+    map.insert("exit", exit as BuiltinFunction);
+    map.insert("type", type_fn as BuiltinFunction);
+    map.insert("which", which as BuiltinFunction);
+    map.insert("pwd", pwd as BuiltinFunction);
+    map.insert("cd", cd as BuiltinFunction);
     map
 });
 
@@ -255,7 +255,21 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
         None => state,
         Some(proc) => {
             if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(proc.exec) {
-                builtin_fn(state, &proc.argv)
+                let stdout: Box<dyn Write> = match proc.stdout {
+                    None => Box::new(std::io::stdout()),
+                    Some(filename) => {
+                        let filename = state.pwd.join(filename);
+                        match proc.stdout_mode {
+                            RedirMode::Write => Box::new(File::create(filename).unwrap()),
+                            RedirMode::Append => Box::new(File::options()
+                                .append(true)
+                                .open(filename)
+                                .unwrap())
+                        }
+
+                    }
+                };
+                builtin_fn(state, &proc.argv, stdout)
             } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), proc.exec) {
                 let mut cmd = Command::new(cmd_ext);
                 cmd.args(proc.argv)
