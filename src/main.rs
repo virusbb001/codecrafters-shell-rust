@@ -270,8 +270,8 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
                     }
                 };
                 builtin_fn(state, &proc.argv, stdout)
-            } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), proc.exec) {
-                let mut cmd = Command::new(cmd_ext);
+            } else if which_internal(&std::env::var("PATH").unwrap_or("".to_string()), proc.exec).is_some() {
+                let mut cmd = Command::new(proc.exec);
                 cmd.args(proc.argv)
                     .current_dir(state.pwd.clone());
                 if let Some(stdout) = proc.stdout {
