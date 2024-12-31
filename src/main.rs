@@ -2,6 +2,7 @@ use crate::tokenize::ParseError;
 use crate::tokenize::tokenize;
 use crate::unescape::unescape;
 use std::env;
+use std::fs::File;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::{fs, sync::LazyLock};
@@ -100,11 +101,11 @@ fn words2proc(argv: &[String]) -> Option<Proc<'_>> {
             match to_redirect.as_ref().unwrap_or(&ToRedirect::Stdout) {
                 ToRedirect::Stdout => {
                     proc.stdout = Some(target);
-                    proc.stdout_mode = RedirMode::Write;
+                    proc.stdout_mode = RedirMode::Append;
                 },
                 ToRedirect::Stderr => {
                     proc.stderr = Some(target);
-                    proc.stderr_mode = RedirMode::Write;
+                    proc.stderr_mode = RedirMode::Append;
                 },
             }
             continue;
@@ -256,8 +257,33 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
             if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(proc.exec) {
                 builtin_fn(state, &proc.argv)
             } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), proc.exec) {
-                let _ = Command::new(cmd_ext).args(proc.argv)
-                    .current_dir(state.pwd.clone())
+                let mut cmd = Command::new(cmd_ext);
+                cmd.args(proc.argv)
+                    .current_dir(state.pwd.clone());
+                if let Some(stdout) = proc.stdout {
+                    let filename = state.pwd.join(stdout);
+                    let f = match proc.stdout_mode {
+                        RedirMode::Write => File::create(filename).unwrap(),
+                        RedirMode::Append => File::options()
+                            .append(true)
+                            .open(filename)
+                            .unwrap()
+                    };
+                    cmd.stdout(f);
+                }
+                if let Some(stderr) = proc.stderr {
+                    let filename = state.pwd.join(stderr);
+                    let f = match proc.stderr_mode {
+                        RedirMode::Write => File::create(filename).unwrap(),
+                        RedirMode::Append => File::options()
+                            .append(true)
+                            .open(filename)
+                            .unwrap()
+                    };
+                    cmd.stderr(f);
+                }
+
+                let _ = cmd
                     .spawn()
                     .expect("")
                     .wait()
@@ -316,7 +342,7 @@ mod tests {
         assert_eq!(result.exec, "echo");
         assert_eq!(result.argv, vec!["a"]);
         assert_eq!(result.stdout, Some("b"));
-        assert_eq!(result.stdout_mode, RedirMode::Write);
+        assert_eq!(result.stdout_mode, RedirMode::Append);
         assert_eq!(result.stderr, None);
 
         let argv = args(&["echo", "a", "2", ">>", "b"]);
@@ -325,7 +351,7 @@ mod tests {
         assert_eq!(result.argv, vec!["a"]);
         assert_eq!(result.stdout, None);
         assert_eq!(result.stderr, Some("b"));
-        assert_eq!(result.stderr_mode, RedirMode::Write);
+        assert_eq!(result.stderr_mode, RedirMode::Append);
 
     }
 }
