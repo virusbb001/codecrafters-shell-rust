@@ -30,8 +30,26 @@ impl ShellState {
     }
 }
 
+struct Proc {
+    exec: String,
+    argv: Vec<String>,
+    stdout: Option<String>,
+    stderr: Option<String>,
+}
+
 fn parse(src: &str) -> Result<Vec<String>, ParseError> {
     tokenize(src).map(|tokens| tokens.iter().map(|s| unescape(s)).collect())
+}
+
+fn words2proc(argv: &[String]) -> Option<Proc> {
+    let exec = argv.first()?.to_string();
+
+    Some(Proc {
+        exec,
+        argv: argv[1..].to_vec(),
+        stdout: None,
+        stderr: None,
+    })
 }
 
 fn echo(state: ShellState, argv: &[String]) -> ShellState {
@@ -167,14 +185,14 @@ fn main() {
 }
 
 fn eval(state: ShellState, argv: &[String]) -> ShellState{
-    let cmd = argv.first();
-    match cmd {
+    let proc = words2proc(argv);
+    match proc {
         None => state,
-        Some(cmd) => {
-            if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(cmd.as_str()) {
-                builtin_fn(state, &argv[1..])
-            } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), cmd) {
-                let _ = Command::new(cmd_ext).args(&argv[1..])
+        Some(proc) => {
+            if let Some(builtin_fn) = BUILTIN_FUNCITONS.get(proc.exec.as_str()) {
+                builtin_fn(state, &proc.argv)
+            } else if let Some(cmd_ext) = which_internal(&std::env::var("PATH").unwrap_or("".to_string()), &proc.exec) {
+                let _ = Command::new(cmd_ext).args(&proc.argv)
                     .current_dir(state.pwd.clone())
                     .spawn()
                     .expect("")
@@ -182,7 +200,7 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
                     ;
                 state
             } else {
-                println!("{}: command not found", cmd);
+                println!("{}: command not found", proc.exec);
                 state
             }
         }
