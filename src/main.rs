@@ -262,6 +262,7 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
                         match proc.stdout_mode {
                             RedirMode::Write => Box::new(File::create(filename).unwrap()),
                             RedirMode::Append => Box::new(File::options()
+                                .create(true)
                                 .append(true)
                                 .open(filename)
                                 .unwrap())
@@ -276,6 +277,7 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
                         match proc.stderr_mode {
                             RedirMode::Write => Box::new(File::create(filename).unwrap()),
                             RedirMode::Append => Box::new(File::options()
+                                .create(true)
                                 .append(true)
                                 .open(filename)
                                 .unwrap())
@@ -293,6 +295,7 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
                     let f = match proc.stdout_mode {
                         RedirMode::Write => File::create(filename).unwrap(),
                         RedirMode::Append => File::options()
+                            .create(true)
                             .append(true)
                             .open(filename)
                             .unwrap()
@@ -304,6 +307,7 @@ fn eval(state: ShellState, argv: &[String]) -> ShellState{
                     let f = match proc.stderr_mode {
                         RedirMode::Write => File::create(filename).unwrap(),
                         RedirMode::Append => File::options()
+                            .create(true)
                             .append(true)
                             .open(filename)
                             .unwrap()
